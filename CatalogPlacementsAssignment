@@ -1,91 +1,124 @@
-import java.util.*;
-import java.io.*;
+import java.math.BigInteger;
+import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Scanner;
 
-public class ShamirSecretSharing {
-    static final int PRIME = 9973;
+public class Main {
 
-    static class Share {
-        int x, y;
-        Share(int x, int y) { this.x = x; this.y = y; }
-        @Override public String toString() { return "(" + x + "," + y + ")"; }
+    private static final BigInteger PRIME = new BigInteger("208351617316091241234326746312124448251235562226470491514186331217050270460481");
+    private final SecureRandom random;
+
+    public Main() {
+        this.random = new SecureRandom();
     }
 
-    static int modInverse(int a, int m) {
-        int m0 = m, y = 0, x = 1;
-        if (m == 1) return 0;
-        while (a > 1) {
-            int q = a / m, t = m;
-            m = a % m; a = t;
-            t = y;
-            y = x - q * y;
-            x = t;
+    public record Share(BigInteger x, BigInteger y) {
+        @Override
+        public String toString() {
+            return String.format("Share(x=%d, y=%d)", x, y);
         }
-        return x < 0 ? x + m0 : x;
     }
 
-    static int evaluatePolynomial(int[] coeffs, int x) {
-        int result = 0, power = 1;
-        for (int coeff : coeffs) {
-            result = (result + coeff * power) % PRIME;
-            power = (power * x) % PRIME;
-        }
-        return result;
-    }
-
-    static ArrayList<Share> generateShares(int secret, int n, int k, Random rand) {
-        int[] coeffs = new int[k];
+    public List<Share> split(BigInteger secret, int n, int k) {
+        final BigInteger[] coeffs = new BigInteger[k];
         coeffs[0] = secret;
-        for (int i = 1; i < k; ++i) {
-            coeffs[i] = rand.nextInt(PRIME);
+        for (int i = 1; i < k; i++) {
+            coeffs[i] = new BigInteger(PRIME.bitLength(), random);
         }
-        ArrayList<Share> shares = new ArrayList<>();
-        for (int i = 1; i <= n; ++i) {
-            shares.add(new Share(i, evaluatePolynomial(coeffs, i)));
+
+        final List<Share> shares = new ArrayList<>();
+        for (int i = 1; i <= n; i++) {
+            BigInteger x = BigInteger.valueOf(i);
+            BigInteger y = evaluatePolynomial(coeffs, x);
+            shares.add(new Share(x, y));
         }
         return shares;
     }
 
-    static int reconstructSecret(List<Share> shares) {
-        int secret = 0;
-        for (int i = 0; i < shares.size(); ++i) {
-            int xi = shares.get(i).x, yi = shares.get(i).y;
-            int li = 1;
-            for (int j = 0; j < shares.size(); ++j) {
-                if (i != j) {
-                    int xj = shares.get(j).x;
-                    int num = (0 - xj + PRIME) % PRIME;
-                    int den = (xi - xj + PRIME) % PRIME;
-                    li = li * num % PRIME * modInverse(den, PRIME) % PRIME;
-                }
+    public BigInteger recombine(List<Share> shares) {
+        BigInteger secret = BigInteger.ZERO;
+        int k = shares.size();
+
+        for (int i = 0; i < k; i++) {
+            BigInteger xi = shares.get(i).x();
+            BigInteger yi = shares.get(i).y();
+
+            BigInteger numerator = BigInteger.ONE;
+            BigInteger denominator = BigInteger.ONE;
+
+            for (int j = 0; j < k; j++) {
+                if (i == j) continue;
+                BigInteger xj = shares.get(j).x();
+                numerator = numerator.multiply(xj.negate()).mod(PRIME);
+                denominator = denominator.multiply(xi.subtract(xj)).mod(PRIME);
             }
-            secret = (secret + yi * li % PRIME) % PRIME;
+            
+            BigInteger term = yi.multiply(numerator)
+                               .multiply(denominator.modInverse(PRIME))
+                               .mod(PRIME);
+            
+            secret = secret.add(term).mod(PRIME);
         }
-        return secret;
+        return secret.add(PRIME).mod(PRIME);
     }
 
-    public static void main(String[] args) {
-        Scanner sc = new Scanner(System.in);
-        Random rand = new Random();
-
-        System.out.print("Enter secret (as a number less than " + PRIME + "): ");
-        int secret = sc.nextInt();
-        System.out.print("Enter total number of shares to generate (n): ");
-        int n = sc.nextInt();
-        System.out.print("Enter minimum shares required to reconstruct (k): ");
-        int k = sc.nextInt();
-
-        if (secret >= PRIME || k > n || secret < 0) {
-            System.err.println("Invalid input. Make sure 0 ≤ secret < " + PRIME + " and k ≤ n.");
-            return;
+    private BigInteger evaluatePolynomial(BigInteger[] coeffs, BigInteger x) {
+        BigInteger result = BigInteger.ZERO;
+        for (int i = coeffs.length - 1; i >= 0; i--) {
+            result = result.multiply(x).add(coeffs[i]).mod(PRIME);
         }
+        return result;
+    }
+    
+    public static void main(String[] args) {
+        Main sss = new Main();
+        Scanner scanner = new Scanner(System.in);
 
-        ArrayList<Share> shares = generateShares(secret, n, k, rand);
-        System.out.println("\nGenerated Shares:");
-        for (Share s : shares) System.out.println(s);
+        System.out.println("--- Shamir's Secret Sharing Demo ---");
+        System.out.println("Working with prime: " + PRIME);
 
-        List<Share> selectedShares = shares.subList(0, k);
-        int recovered = reconstructSecret(selectedShares);
+        try {
+            System.out.print("\nEnter the secret (as a large number): ");
+            BigInteger secret = new BigInteger(scanner.nextLine());
 
-        System.out.println("\nReconstructed Secret using first " + k + " shares: " + recovered);
+            System.out.print("Enter total number of shares to generate (n): ");
+            int n = Integer.parseInt(scanner.nextLine());
+
+            System.out.print("Enter minimum shares required to reconstruct (k): ");
+            int k = Integer.parseInt(scanner.nextLine());
+            
+            if (k > n || secret.compareTo(PRIME) >= 0 || secret.signum() < 0) {
+                 System.err.println("\n Invalid input. Ensure k <= n and 0 <= secret < PRIME.");
+                 return;
+            }
+
+            List<Share> allShares = sss.split(secret, n, k);
+            System.out.println("\n Successfully generated " + n + " shares:");
+            allShares.forEach(System.out::println);
+
+            Collections.shuffle(allShares);
+            List<Share> sharesForReconstruction = allShares.subList(0, k);
+            
+            System.out.println("\nReconstructing secret using the following " + k + " random shares:");
+            sharesForReconstruction.forEach(System.out::println);
+
+            BigInteger reconstructedSecret = sss.recombine(sharesForReconstruction);
+            System.out.println("\nReconstructed Secret: " + reconstructedSecret);
+
+            if (reconstructedSecret.equals(secret)) {
+                System.out.println(" Verification successful! The secret matches.");
+            } else {
+                System.out.println(" Verification failed! The secret does not match.");
+            }
+
+        } catch (NumberFormatException e) {
+            System.err.println("\n Invalid number format. Please enter valid integers.");
+        } catch (ArithmeticException e) {
+            System.err.println("\n An arithmetic error occurred. This can happen if k is too large or shares are duplicated.");
+        } finally {
+            scanner.close();
+        }
     }
 }
